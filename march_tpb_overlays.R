@@ -4,6 +4,7 @@ library(data.table)
 library(openxlsx)
 library(tidytransit)
 library(sf)
+library(DBI)
 library(rhdf5)
 library(psrcelmer)
 library(units)
@@ -12,11 +13,14 @@ source("functions.R")
 
 un <- Sys.getenv("USERNAME")
 data_dir <- file.path("C:/Users",str_to_lower(un),"Puget Sound Regional Council/RTP Data & Analysis - Data")
+gis_dir <- file.path("C:/Users",str_to_lower(un),"Puget Sound Regional Council/GIS - Transportation/RTP_2026")
+
 transit_dir <- file.path(data_dir, "transit")
 model_dir <- file.path(data_dir, "model", "base-year")
 spatial_inputs_dir <- file.path(data_dir,"spatial-layers","input-layers")
 spatial_outputs_dir <- file.path(data_dir,"spatial-layers","output-layers")
 congestion_dir <- file.path(data_dir,"npmrds")
+tables_dir <- file.path(data_dir, "tables")
 
 options(dplyr.summarise.inform = FALSE)
 
@@ -62,11 +66,14 @@ moderate_congestion_threshold <- 0.75
 congestion_month <- 1
 congestion_year <- 2025
 
+peak_periods <- c("6to7", "7to8", "8to9", "15to16", "16to17", "17to18")
+off_peak_periods <- c("5to6", "9to10", "10to14", "14to15", "18to20", "20to5")
+
 # ElmerGeo layer names
+water_lyr <- "LARGEST_WATERBODIES"
 non_sr_lyr <- "FUNC_CLASS_NON_SR"
 sr_lyr <- "FUNC_CLASS_SR"
 region_lyr <- "PSRC_REGIONAL_OUTLINE"
-local_lyr <- "REG_STCL"
 psrc_fips <- c("53033", "53035", "53053", "53061")
 
 # Input File Paths -------------------------------------------------------------
@@ -74,9 +81,133 @@ gtfs_file <- file.path(transit_dir, "gtfs", tolower(gtfs_service), paste0(gtfs_y
 hct_file <- file.path(transit_dir, "hct_ids.csv")
 parcel_file <- file.path(model_dir, "parcels_urbansim.txt")
 trips_file <- file.path(model_dir, "_trip.tsv")
+network_outputs_file <- file.path(model_dir, "network_results.csv")
+transit_agency_outputs_file <- file.path(model_dir, "daily_boardings_by_agency.csv")
 hh_file <- file.path(model_dir, "hh_and_persons.h5")
+fc_file <- file.path(model_dir, "geodatabase_fc.csv")
+ftype_file <- file.path(model_dir, "geodatabase_ftype.csv")
 its_file <- file.path(spatial_inputs_dir, "ITS_Signals_2024_Final.shp")
 hrn_file <- file.path(spatial_inputs_dir, "filtered_hrn.gpkg")
+
+fgdb_file <- file.path(spatial_outputs_dir,"rtp_current_system.gdb")
+congestion_fgdb_file <- file.path(gis_dir,"congestion","rtp_current_system_congestion.gdb")
+
+# General spatial layers for analysis ---------------------------------------------
+water <- st_read_elmergeo(water_lyr, project_to_wgs84 = FALSE) |> select(id = "object_id")
+
+# Model VMT Outputs for Financial Tool ----------------------------------------
+print(str_glue("Opening the {network_outputs_file} file"))
+network_output <- read_csv(network_outputs_file, show_col_types = FALSE) 
+
+print(str_glue("Calcualting VMT by vehicle type, county and tie of day"))
+vmt_data <- network_output |>
+  mutate(`Passenger Vehicles` = round((`@hov2_inc1` + `@hov2_inc2` + `@hov2_inc3` + 
+         `@hov3_inc1` + `@hov3_inc2` + `@hov3_inc3` + 
+         `@sov_inc1` + `@sov_inc2` + `@sov_inc3` +
+         `@tnc_inc1` + `@tnc_inc2` + `@tnc_inc3`) * length, 0)) |>
+  mutate(`Medium Trucks` = round(`@mveh`* length, 0)) |>
+  mutate(`Heavy Trucks` = round(`@hveh`* length, 0)) |>
+  mutate(`Buses` = round(`@bveh`* length, 0)) |>
+  mutate(`Time of Day` = case_when(
+    tod %in% peak_periods ~ "Peak",
+    tod %in% off_peak_periods ~ "Off-Peak")) |>
+  mutate(County = case_when(
+    `@countyid` == 33 ~ "King",
+    `@countyid` == 35 ~ "Kitsap",
+    `@countyid` == 53 ~ "Pierce",
+    `@countyid` == 61 ~ "Snohomish")) |>
+  select("County", "Passenger Vehicles", "Medium Trucks", "Heavy Trucks", "Buses", "Time of Day") |>
+  group_by(County, `Time of Day`) |>
+  summarise(`Passenger Vehicles` = round(sum(`Passenger Vehicles`),-3), 
+            `Medium Trucks` = round(sum(`Medium Trucks`),-3),
+            `Heavy Trucks` = round(sum(`Heavy Trucks`),-3),
+            `Buses` = round(sum(`Buses`),-2)) |>
+  as_tibble() |>
+  mutate(County = replace_na(County, "Outside the Region")) |>
+  drop_na()
+
+region <- vmt_data |>
+  mutate(County = "Region") |>
+  group_by(County, `Time of Day`) |>
+  summarise(`Passenger Vehicles` = round(sum(`Passenger Vehicles`),-3), 
+            `Medium Trucks` = round(sum(`Medium Trucks`),-3),
+            `Heavy Trucks` = round(sum(`Heavy Trucks`),-3),
+            `Buses` = round(sum(`Buses`),-2)) |>
+  as_tibble()
+
+daily_region <- region |>
+  mutate(`Time of Day` = "Daily") |>
+  group_by(County, `Time of Day`) |>
+  summarise(`Passenger Vehicles` = round(sum(`Passenger Vehicles`),-3), 
+            `Medium Trucks` = round(sum(`Medium Trucks`),-3),
+            `Heavy Trucks` = round(sum(`Heavy Trucks`),-3),
+            `Buses` = round(sum(`Buses`),-2)) |>
+  as_tibble()
+
+daily <- vmt_data |>
+  mutate(`Time of Day` = "Daily") |>
+  group_by(County, `Time of Day`) |>
+  summarise(`Passenger Vehicles`= round(sum(`Passenger Vehicles`),-3), 
+            `Medium Trucks` = round(sum(`Medium Trucks`),-3),
+            `Heavy Trucks` = round(sum(`Heavy Trucks`),-3),
+            `Buses` = round(sum(`Buses`),-2)) |>
+  as_tibble()
+  
+vmt_data <- bind_rows(vmt_data, region, daily, daily_region) |>
+  mutate(`Total` = `Passenger Vehicles` + `Medium Trucks` + `Heavy Trucks` + `Buses`) |>
+  mutate(Total = round(Total, -3)) |>
+  pivot_longer(cols = !c(County, `Time of Day`), names_to = "Mode", values_to = "Estimate") |>
+  pivot_wider(names_from = c(County), values_from = Estimate) |>
+  select("Time of Day", "Mode", "Region", "King", "Kitsap", "Pierce", "Snohomish") |>
+  mutate(`Time of Day` = factor(`Time of Day`, levels = c("Daily", "Peak", "Off-Peak"))) |>
+  mutate(Mode = factor(Mode, levels = c("Total", "Passenger Vehicles", "Medium Trucks", "Heavy Trucks", "Buses"))) |>
+  arrange(`Time of Day`, Mode)
+
+rm(region, daily, daily_region, network_output)
+write_csv(vmt_data, file.path(tables_dir, "vmt_data.csv"))
+
+# Model Transit Data for Financial Tool -----------------------------------------
+print(str_glue("Opening the {transit_agency_outputs_file} file"))
+transit_boardings_data <- read_csv(transit_agency_outputs_file, show_col_types = FALSE) |>
+  select(Agency = "agency_name", `Daily Boardings` = "boardings") |>
+  mutate(`Time of Day` = "Daily") |>
+  mutate(`Daily Boardings` = round(`Daily Boardings`, -2)) |>
+  arrange(Agency) |>
+  select("Time of Day", "Agency", "Daily Boardings")
+
+region <- transit_boardings_data |>
+  mutate(Agency = "Total") |>
+  group_by(`Time of Day`, Agency) |>
+  summarise(`Daily Boardings` = sum(`Daily Boardings`)) |>
+  as_tibble()
+
+transit_boardings_data <- bind_rows(region, transit_boardings_data)
+
+# Centerline Miles --------------------------------------------------------------
+fc_names <- read_csv(fc_file, show_col_types = FALSE)
+ftype_names <- read_csv(ftype_file, show_col_types = FALSE)
+
+srv <- "AWS-PROD-SQL\\Sockeye"
+db <- "OSMtest"
+gdb_nm <- paste0("MSSQL:server=",srv,";database=",db,";trusted_connection=yes")
+
+conn <- dbConnect(odbc::odbc(),
+                  Driver = "SQL Server", # Change to "Oracle" if using Oracle
+                  Server = srv,
+                  Database = db,
+                  trusted_connection = "yes")
+
+
+print(str_glue("Opening the classified roadway layer from to {srv}\\{db}"))
+network <- st_read(gdb_nm, "dbo.TransRefEdges", crs = spn) |>
+  filter(InServiceDate <= model_base_year) |>
+  select("PSRCEdgeID", fc = "FunctionalClass", ftype = "FacilityType", county = "CountyID", active = "ActiveLink")
+
+print(str_glue("Opening the classified roadway attributes layer from to {srv}\\{db}"))
+network_attributes <- st_read(conn, layer = "modeAttributes") 
+
+dbDisconnect(conn)
+
 
 # Basic GTFS File Cleaning ---------------------------------------------------
 # Load High-capacity Transit Route information for use in GTS file analysis
@@ -248,6 +379,7 @@ min_routes_route_shape_ids <- stoproutes |> filter(trip_id %in% min_routes_trip_
 hct_route_shape_ids <- stoproutes |> filter(trip_id %in% hct_trip_ids) |> select("shape_id") |> pull() |> unique()
 
 # Stops Layer
+print(str_glue("Cleaning and writing stop points to {fgdb_file}"))
 stops_lyr <- stops |>
   mutate(frequent = case_when(
     !(stop_id %in% frequent_stop_ids) ~ 0,
@@ -262,14 +394,62 @@ stops_lyr <- stops |>
     !(stop_id %in% hct_stop_ids) ~ 0,
     stop_id %in% hct_stop_ids ~ 1)) |>
   st_as_sf(coords = c("stop_lon", "stop_lat"), crs=wgs84) |>
-  st_transform(spn) |>
-  st_buffer(dist = buffer_dist * 5280)
+  st_transform(spn) 
 
-st_write(stops_lyr, dsn = file.path(spatial_outputs_dir, "transit_stops.shp"), append = FALSE)
+st_write(stops_lyr, dsn = fgdb_file, layer = paste0("transit_stops_", gtfs_service, "_", gtfs_year), append = FALSE)
+
+# Minimum Transit Service Stop buffers
+print(str_glue("Cleaning and writing the minimum transit stops {buffer_dist} mile buffer to {fgdb_file}"))
+minimum_transit_lyr <- stops_lyr |>
+  st_buffer(dist = buffer_dist * 5280) |>
+  filter(min_routes == 1) |>
+  group_by(min_routes) |>
+  summarise(geometry = st_union(geometry), .groups = "drop")
+
+minimum_transit_lyr <- st_difference(minimum_transit_lyr, water)
+st_write(minimum_transit_lyr, dsn = fgdb_file, layer = paste0("minimum_transit_service_", gtfs_service, "_", gtfs_year, "_buffer_", ifelse(buffer_dist==0.25, "qtr_mile", "hlf_mile")), append = FALSE)
+
+# All Day Transit Service Stop buffers
+print(str_glue("Cleaning and writing the all-day transit stops {buffer_dist} mile buffer to {fgdb_file}"))
+all_day_transit_lyr <- stops_lyr |>
+  st_buffer(dist = buffer_dist * 5280) |>
+  filter(all_day == 1) |>
+  group_by(all_day) |>
+  summarise(geometry = st_union(geometry), .groups = "drop")
+
+all_day_transit_lyr <- st_difference(all_day_transit_lyr, water)
+st_write(all_day_transit_lyr, dsn = fgdb_file, layer = paste0("all_day_transit_service_", gtfs_service, "_", gtfs_year, "_buffer_", ifelse(buffer_dist==0.25, "qtr_mile", "hlf_mile")), append = FALSE)
+
+# Frequent Transit Service Stop buffers
+print(str_glue("Cleaning and writing the frequent transit stops {buffer_dist} mile buffer to {fgdb_file}"))
+frequent_transit_lyr <- stops_lyr |>
+  st_buffer(dist = buffer_dist * 5280) |>
+  filter(frequent == 1) |>
+  group_by(frequent) |>
+  summarise(geometry = st_union(geometry), .groups = "drop")
+
+frequent_transit_lyr <- st_difference(frequent_transit_lyr, water)
+st_write(frequent_transit_lyr, dsn = fgdb_file, layer = paste0("frequent_transit_service_", gtfs_service, "_", gtfs_year, "_buffer_", ifelse(buffer_dist==0.25, "qtr_mile", "hlf_mile")), append = FALSE)
+
+# High-Capacity Transit Service Stop buffers
+print(str_glue("Cleaning and writing the high-capacity transit stops {buffer_dist} mile buffer to {fgdb_file}"))
+hct_transit_lyr <- stops_lyr |>
+  st_buffer(dist = buffer_dist * 5280) |>
+  filter(hct == 1) |>
+  group_by(hct) |>
+  summarise(geometry = st_union(geometry), .groups = "drop")
+
+hct_transit_lyr <- st_difference(hct_transit_lyr, water)
+st_write(hct_transit_lyr, dsn = fgdb_file, layer = paste0("high_capacity_transit_service_", gtfs_service, "_", gtfs_year, "_buffer_", ifelse(buffer_dist==0.25, "qtr_mile", "hlf_mile")), append = FALSE)
 
 # Route Layer
-routes_layer <- shapes_as_sf(gtfs$shapes) 
-routes_layer <- left_join(routes_layer, trips, by=c("shape_id")) |> 
+print(str_glue("Cleaning and writing the transit route layer to {fgdb_file}"))
+temp <- trips |> 
+  select("shape_id", "direction_id", "route_name", "type_name", "agency_name") |>
+  distinct()
+
+routes_lyr <- shapes_as_sf(gtfs$shapes) 
+routes_lyr <- left_join(routes_lyr, temp, by=c("shape_id")) |> 
   select("shape_id", direction = "direction_id", route = "route_name", type = "type_name", agency = "agency_name") |>
   mutate(frequent = case_when(
     !(shape_id %in% frequent_route_shape_ids) ~ 0,
@@ -285,33 +465,34 @@ routes_layer <- left_join(routes_layer, trips, by=c("shape_id")) |>
     shape_id %in% hct_route_shape_ids ~ 1)) |>
   st_transform(spn)
 
-st_write(routes_layer, dsn = file.path(spatial_outputs_dir, "transit_routes.shp"), append = FALSE)
+st_write(routes_lyr, dsn = fgdb_file, layer = paste0("transit_routes_", gtfs_service, "_", gtfs_year), append = FALSE)
 
-rm(routes, stops, stoproutes, stoptimes, trips, trips_by_hour_by_route, gtfs, hct)
+rm(routes, stops, stoproutes, stoptimes, trips, trips_by_hour_by_route, gtfs, hct, temp)
 
 # Parcels -----------------------------------------------------------------
+print(str_glue("Loading the parcels file and creating a point layer to use in analysis"))
 p <- as_tibble(fread(parcel_file)) |>
   select(parcel_id = "parcelid", jobs = "emptot_p", hh = "hh_p",x = "xcoord_p", y = "ycoord_p") |>
   st_as_sf(coords = c("x", "y"), crs=spn)
 
 # Parcels near Transit by Frequency & Span typologies
 print(str_glue("Intersecting parcels with areas with a minimum level of transit service"))
-m = st_intersection(p |> select("parcel_id"), stops_lyr |> filter(min_routes == 1) |> select("min_routes")) |>
+m = st_intersection(p |> select("parcel_id"), stops_lyr |> filter(min_routes == 1) |> select("min_routes") |> st_buffer(dist = buffer_dist * 5280)) |>
   st_drop_geometry() |>
   distinct()
 
 print(str_glue("Intersecting parcels with areas with all day transit service"))
-a = st_intersection(p |> select("parcel_id"), stops_lyr |> filter(all_day == 1) |> select("all_day")) |>
+a = st_intersection(p |> select("parcel_id"), stops_lyr |> filter(all_day == 1) |> select("all_day") |> st_buffer(dist = buffer_dist * 5280)) |>
   st_drop_geometry() |>
   distinct()
 
 print(str_glue("Intersecting parcels with areas with frequent transit service"))
-f = st_intersection(p |> select("parcel_id"), stops_lyr |> filter(frequent == 1) |> select("frequent")) |>
+f = st_intersection(p |> select("parcel_id"), stops_lyr |> filter(frequent == 1) |> select("frequent") |> st_buffer(dist = buffer_dist * 5280)) |>
   st_drop_geometry() |>
   distinct()
 
 print(str_glue("Intersecting parcels with areas with high-capacity transit service"))
-h = st_intersection(p |> select("parcel_id"), stops_lyr |> filter(hct == 1) |> select("hct")) |>
+h = st_intersection(p |> select("parcel_id"), stops_lyr |> filter(hct == 1) |> select("hct") |> st_buffer(dist = buffer_dist * 5280)) |>
   st_drop_geometry() |>
   distinct()
 
@@ -326,6 +507,7 @@ p <- p |> mutate(year = model_base_year)
 rm(a,f,h,m)
 
 # Trips -------------------------------------------------------------------
+print(str_glue("Calculating the daily vehicle minutes of delay by household from the Daysim Trips File"))
 t <- as_tibble(fread(trips_file)) |>
   filter(mode %in% c(3, 4, 5) & dorp==1) |>
   select("hhno", "travtime", "sov_ff_time") |>
@@ -338,6 +520,7 @@ t <- as_tibble(fread(trips_file)) |>
   as_tibble()
 
 # Delay per Household --------------------------------------------------------------
+print(str_glue("Placing transit typology onto HH's by the location of their home parcel"))
 h <- as_tibble(h5read(hh_file, "Household")) |> select("hhno", parcel_id = "hhparcel")
 h <- left_join(h, p |> select(-"jobs", -"hh"), by="parcel_id")
 h <- left_join(h, t, by="hhno") |> mutate(delay = replace_na(delay, 0))
@@ -409,20 +592,23 @@ r <- h |>
   rename(`Span & Frequency` = "region") 
 
 delay_per_hh <- bind_rows(d1, d2, d3, d4, r)
-rm(d1, d2, d3, d4, r)
+rm(d1, d2, d3, d4, r, h, t, p)
 
 # Roadways by Functional Classification -----------------------------------
+print(str_glue("Loading {region_lyr} to trim statewide layers"))
 r1 <- st_read_elmergeo(region_lyr, project_to_wgs84 = FALSE) |> select(county = "id")
 
+print(str_glue("Loading {non_sr_lyr} functional classfication layers"))
 r2 <- st_read_elmergeo(non_sr_lyr, project_to_wgs84 = FALSE) |>
   filter(county_fips %in% psrc_fips) |>
-  select(id = "route_ident", length = "shape_leng", fc = "federalf_1")
+  select(shape_id = "route_ident", length = "shape_leng", fc = "federalf_1")
 
 r2 <- r2 |>
   mutate(centerline = as.numeric(set_units(st_length(r2), "mi")))
 
+print(str_glue("Loading {sr_lyr} functional classfication layers"))
 r3 <- st_read_elmergeo(sr_lyr, project_to_wgs84 = FALSE) |>
-  select(id = "routeident", length = "shape_leng", fc = "federalf_1")
+  select(shape_id = "routeident", length = "shape_leng", fc = "federalf_1")
 
 r3 <- st_intersection(r3, r1) 
 
@@ -430,37 +616,25 @@ r3 <- r3 |>
   mutate(centerline = as.numeric(set_units(st_length(r3), "mi"))) |>
   select(-"county")
 
-r4 <- st_read_elmergeo(local_lyr, project_to_wgs84 = FALSE)
+functional_classified_roadways <- rbind(r2, r3)
+functional_classified_roadways <- st_cast(functional_classified_roadways, "LINESTRING")
 
-r5 <- r4 |>
-  mutate(centerline = as.numeric(set_units(st_length(r4), "mi"))) |>
-  mutate(length = as.numeric(set_units(st_length(r4), "ft"))) |>
-  filter(facilityty <= 9) |>
-  select(id = "psrcedgeid", "length", fc = "facilityty", "centerline") |>
-  st_drop_geometry() |>
-  group_by(fc) |>
-  summarise(centerline_miles = sum(centerline)) |>
-  as_tibble() |>
-  filter(fc == 8) |>
-  mutate(fc = as.character(fc)) |>
-  mutate(fc = "Local Roadways - 2022 RTP")
-
-functional_classified_roadways <- bind_rows(r2, r3)
-
-centerline_mi <- bind_rows(functional_classified_roadways) |>
+wsdot_centerline_mi <- functional_classified_roadways |>
   st_drop_geometry() |>
   group_by(fc) |>
   summarize(centerline_miles = sum(centerline)) |>
   as_tibble()
 
-region <- centerline_mi |>
+region <- wsdot_centerline_mi |>
   mutate(fc = "Region") |>
   group_by(fc) |>
   summarize(centerline_miles = sum(centerline_miles)) |>
   as_tibble()
 
-centerline_mi <- bind_rows(centerline_mi, region, r5)
-rm(r1, r2, r3, r4, r5, region)
+print(str_glue("Calculating centerline miles and writing the classified roadway layer to {fgdb_file}"))
+wsdot_centerline_mi <- bind_rows(wsdot_centerline_mi, region)
+st_write(functional_classified_roadways, dsn = fgdb_file, layer = "fc_roadways_wsdot", append = FALSE)
+rm(r1, r2, r3, region)
 
 # ITS Overlays ------------------------------------------------------------
 its <- read_sf(its_file) |> st_transform(spn)
@@ -522,10 +696,25 @@ congested_lanes_miles <- process_npmrds_data(file_path = congestion_dir) |>
 congestion <- map_npmrds_data(file_path = congestion_dir, coord_sys = spn)
 
 congestion_lyr <- congestion |> 
-  filter(pm_peak <= 0.25 & month(date) == congestion_month & year(date) == congestion_year) |>
-  select("Tmc", "pm_peak")
+  filter(month(date) == congestion_month & year(date) == congestion_year) |>
+  mutate(am_congestion = case_when(
+    am_peak <= 0.25 ~ "Severe",
+    am_peak <= 0.50 ~ "Heavy",
+    am_peak <= 0.75 ~ "Moderate",
+    am_peak > 0.75 ~ "Mininmal")) |>
+  mutate(midday_congestion = case_when(
+    midday <= 0.25 ~ "Severe",
+    midday <= 0.50 ~ "Heavy",
+    midday <= 0.75 ~ "Moderate",
+    midday > 0.75 ~ "Mininmal")) |>
+  mutate(pm_congestion = case_when(
+    pm_peak <= 0.25 ~ "Severe",
+    pm_peak <= 0.50 ~ "Heavy",
+    pm_peak <= 0.75 ~ "Moderate",
+    pm_peak > 0.75 ~ "Mininmal")) |>
+  select(tmc = "Tmc", "roadway", county = "geography", "date", "year", "am_congestion", "midday_congestion", "pm_congestion")
 
-st_write(congestion_lyr, dsn = file.path(spatial_outputs_dir, "congestion_roadways.shp"), append = FALSE)
+st_write(congestion_lyr, dsn = congestion_fgdb_file, layer = "roadway_congestion_2025", append = FALSE)
 
 i <- st_intersection(its_buffer, congestion_lyr) |>
   select("OBJECTID", street = "majorst_1", "ts_asc", "ts_coordin") |>
@@ -556,3 +745,5 @@ cong_summary <- its_cong |>
 # Final Data Cleanup ------------------------------------------------------
 
 
+# Write the sf object to the File Geodatabase
+st_write(its_cong, dsn = fgdb_file, layer = "congestion_its_overlay", append = FALSE)
