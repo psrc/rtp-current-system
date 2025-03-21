@@ -7,8 +7,6 @@ library(psrcelmer)
 un <- Sys.getenv("USERNAME")
 data_dir <- file.path("C:/Users",str_to_lower(un),"Puget Sound Regional Council/RTP Data & Analysis - Data")
 gis_dir <- file.path("C:/Users",str_to_lower(un),"Puget Sound Regional Council/GIS - Transportation/RTP_2026")
-spatial_inputs_dir <- file.path(data_dir,"spatial-layers","input-layers")
-#spatial_outputs_dir <- file.path(data_dir,"spatial-layers","output-layers")
 options(dplyr.summarise.inform = FALSE)
 
 # Inputs ------------------------------------------------------------------
@@ -20,25 +18,16 @@ gtfs_service <- "fall"
 if (tolower(gtfs_service)=="spring") {gtfs_month = "05"} else (gtfs_month = "10")
 
 # Input File Paths -------------------------------------------------------------
-#its_file <- file.path(spatial_inputs_dir, "ITS_Signals_2024_Final.shp")
-hrn_file <- file.path(spatial_inputs_dir, "filtered_hrn.gpkg")
 efa_file <- file.path(gis_dir, "equity_focus_areas", "efa_3groupings_1sd", "equity_focus_areas_2023.csv")
 fgts_file <- file.path(gis_dir, "freight", "FGTSWA.gdb")
-
 fgdb_file <- file.path(gis_dir,"transit","Transit_Network_2024.gdb")
 congestion_fgdb_file <- file.path(gis_dir,"congestion","rtp_current_system_congestion.gdb")
-its_input_fgdb_file <- file.path(gis_dir,"its_overlays","ITS_Signals_2024_Final.gdb")
-its_fgdb_file <- file.path(gis_dir,"its_overlays","rtp_current_system_its_overlays.gdb")
-its_csv_file <- file.path(gis_dir,"its_overlays","rtp_current_system_its_overlays.csv")
+its_input_fgdb_file <- file.path(gis_dir,"its","ITS_Signals_2024_Final.gdb")
+its_fgdb_file <- file.path(gis_dir,"its","rtp_current_system_its_overlays.gdb")
+its_csv_file <- file.path(gis_dir,"its","rtp_current_system_its_overlays.csv")
+safety_fgdb_file <- file.path(gis_dir,"safety","high_injury_networks_2024.gdb")
 
 tract_lyr <- "TRACT2020"
-
-# its <- read_sf(its_file) |> 
-#   st_transform(spn) |>
-#   rename(update_2024 = "2024Update") |>
-#   rename(signal_id = "OBJECTID")
-# 
-# st_write(its, dsn = its_input_fgdb_file, layer = "its_signals_final_2024", append = FALSE)
 
 # Layers for Overlays ------------------------------------------------------------
 print(str_glue("Reading ITS signal data from {its_input_fgdb_file}"))
@@ -57,8 +46,8 @@ frequent_transit <- st_read(dsn = fgdb_file, layer = paste0("transit_routes_", g
   filter(frequent == 1) |> 
   select("shape_id", "route")
 
-print(str_glue("Loading the Walk & Bike subset of the High Injury Network from {hrn_file}"))
-high_injury_network <- read_sf(hrn_file) |> 
+print(str_glue("Loading the Walk & Bike subset of the High Injury Network from {safety_fgdb_file}"))
+high_injury_network <- st_read(dsn = safety_fgdb_file, layer = "high_injury_network_nonmotorized_subset_2024") |> 
   st_transform(spn)
 
 print(str_glue("Loading the roadway congestion layer from {congestion_fgdb_file} and trimming to PM Heavy & Severe COngestion"))
