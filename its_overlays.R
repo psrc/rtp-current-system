@@ -28,6 +28,7 @@ fgts_file <- file.path(gis_dir, "freight", "FGTSWA.gdb")
 fgdb_file <- file.path(spatial_outputs_dir,"rtp_current_system.gdb")
 congestion_fgdb_file <- file.path(gis_dir,"congestion","rtp_current_system_congestion.gdb")
 its_fgdb_file <- file.path(gis_dir,"its_overlays","rtp_current_system_its_overlays.gdb")
+its_csv_file <- file.path(gis_dir,"its_overlays","rtp_current_system_its_overlays.csv")
 
 tract_lyr <- "TRACT2020"
 
@@ -97,15 +98,25 @@ i <- st_intersection(its_buffer, high_injury_network) |>
 its <- left_join(its, i, by  ="OBJECTID") |>
   mutate(`high_injury_network` = replace_na(`high_injury_network`, "No"))
 
-print(str_glue("Intersecting the ITS layer with the PM Peak Heavy and Severe Congestion"))
+print(str_glue("Intersecting the ITS layer with the PM Peak Severe Congestion"))
+i <- st_intersection(its_buffer, roadway_congestion |> filter(pm_congestion == "Severe")) |>
+  select("OBJECTID") |>
+  st_drop_geometry() |>
+  distinct() |>
+  mutate(`pm_severe_congestion` = "Yes")
+
+its <- left_join(its, i, by  ="OBJECTID") |>
+  mutate(`pm_severe_congestion` = replace_na(`pm_severe_congestion`, "No"))
+
+print(str_glue("Intersecting the ITS layer with the PM Peak Heavy & Severe Congestion"))
 i <- st_intersection(its_buffer, roadway_congestion) |>
   select("OBJECTID") |>
   st_drop_geometry() |>
   distinct() |>
-  mutate(`pm_congestion` = "Yes")
+  mutate(`pm_heavy_severe_congestion` = "Yes")
 
 its <- left_join(its, i, by  ="OBJECTID") |>
-  mutate(`pm_congestion` = replace_na(`pm_congestion`, "No"))
+  mutate(`pm_heavy_severe_congestion` = replace_na(`pm_heavy_severe_congestion`, "No"))
 
 print(str_glue("Intersecting the ITS layer with the FGTS network"))
 i <- st_intersection(its_buffer, fgts) |>
@@ -178,5 +189,251 @@ i <- st_intersection(its_buffer, efa_tracts |> filter(efa_older >0)) |>
 its <- left_join(its, i, by  ="OBJECTID") |>
   mutate(`efa_old` = replace_na(`efa_old`, "No"))
 
-# Final Data Cleanup ------------------------------------------------------
-st_write(its, dsn = its_fgdb_file, layer = "its_overlays_2024", append = FALSE)
+its <- its |>
+  rename(update_2024 = "2024Update")
+
+# Overlay Layers ----------------------------------------------------------
+print(str_glue("Creating ITS overlay layers and summary tables"))
+transit_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "tsp", "frequent_transit") |>
+  mutate(tsp = str_replace_all(tsp, "Null", "No")) |>
+  filter(frequent_transit == "Yes")
+
+transit_tbl <- transit_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(tsp) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals on Frequent Transit Routes with Transit Signal Priority") |>
+  pivot_wider(names_from = tsp, values_from = count) |>
+  mutate(Total = Yes + No)
+
+safety_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", "high_injury_network") |>
+  mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
+  filter(high_injury_network == "Yes")
+
+safety_tbl <- safety_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(ped_signal) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals on the High Injury Network non-motorized subset with Accessible Pedestrian Signals") |>
+  pivot_wider(names_from = ped_signal, values_from = count) |>
+  mutate(Total = Yes + No)
+
+severe_congestion_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_severe_congestion") |>
+  mutate(ts_asc = str_replace_all(ts_asc, "Null", "No")) |>
+  mutate(ts_coordin = str_replace_all(ts_coordin, "Null", "No")) |>
+  mutate(asc_or_coord = case_when (
+    ts_asc == "Yes" & ts_coordin == "Yes" ~ "Yes",
+    ts_asc == "Yes" & ts_coordin == "No" ~ "Yes",
+    ts_asc == "No" & ts_coordin == "Yes" ~ "Yes",
+    ts_asc == "No" & ts_coordin == "No" ~ "No")) |>
+  filter(pm_severe_congestion == "Yes")
+
+severe_congestion_tbl <- severe_congestion_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(asc_or_coord) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals on the NHS network that experience Severe congestion with Adaptive or Coordinated Signals") |>
+  pivot_wider(names_from = asc_or_coord, values_from = count) |>
+  mutate(Total = Yes + No)
+
+heavy_severe_congestion_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_heavy_severe_congestion") |>
+  mutate(ts_asc = str_replace_all(ts_asc, "Null", "No")) |>
+  mutate(ts_coordin = str_replace_all(ts_coordin, "Null", "No")) |>
+  mutate(asc_or_coord = case_when (
+    ts_asc == "Yes" & ts_coordin == "Yes" ~ "Yes",
+    ts_asc == "Yes" & ts_coordin == "No" ~ "Yes",
+    ts_asc == "No" & ts_coordin == "Yes" ~ "Yes",
+    ts_asc == "No" & ts_coordin == "No" ~ "No")) |>
+  filter(pm_heavy_severe_congestion == "Yes")
+
+heavy_severe_congestion_tbl <- heavy_severe_congestion_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(asc_or_coord) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals on the NHS network that experience Heavy or Severe congestion with Adaptive or Coordinated Signals") |>
+  pivot_wider(names_from = asc_or_coord, values_from = count) |>
+  mutate(Total = Yes + No)
+
+poc_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_of_color = "efa_poc") |>
+  mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
+  filter(people_of_color == "Yes")
+
+poc_tbl <- poc_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(ped_signal) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals in areas with a higher share of People of Color with Accessible Pedestrian Signals") |>
+  pivot_wider(names_from = ped_signal, values_from = count) |>
+  mutate(Total = Yes + No)
+
+pov_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_lower_incomes = "efa_pov") |>
+  mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
+  filter(people_lower_incomes == "Yes")
+
+pov_tbl <- pov_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(ped_signal) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals in areas with a higher share of People with Lower Incomes with Accessible Pedestrian Signals") |>
+  pivot_wider(names_from = ped_signal, values_from = count) |>
+  mutate(Total = Yes + No)
+
+lep_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_limited_english = "efa_lep") |>
+  mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
+  filter(people_limited_english == "Yes")
+
+lep_tbl <- lep_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(ped_signal) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals in areas with a higher share of People with Limited English Profiency with Accessible Pedestrian Signals") |>
+  pivot_wider(names_from = ped_signal, values_from = count) |>
+  mutate(Total = Yes + No)
+
+dis_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_with_a_disability = "efa_dis") |>
+  mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
+  filter(people_with_a_disability == "Yes")
+
+dis_tbl <- dis_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(ped_signal) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals in areas with a higher share of People with a Disability with Accessible Pedestrian Signals") |>
+  pivot_wider(names_from = ped_signal, values_from = count) |>
+  mutate(Total = Yes + No)
+
+yth_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_under_18 = "efa_yth") |>
+  mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
+  filter(people_under_18 == "Yes")
+
+yth_tbl <- yth_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(ped_signal) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals in areas with a higher share of People under 18 with Accessible Pedestrian Signals") |>
+  pivot_wider(names_from = ped_signal, values_from = count) |>
+  mutate(Total = Yes + No)
+
+old_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_over_65 = "efa_old") |>
+  mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
+  filter(people_over_65 == "Yes")
+
+old_tbl <- old_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(ped_signal) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals in areas with a higher share of People 65+ with Accessible Pedestrian Signals") |>
+  pivot_wider(names_from = ped_signal, values_from = count) |>
+  mutate(Total = Yes + No)
+
+region_ped_tbl <- its |>
+  st_drop_geometry() |>
+  mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
+  mutate(count = 1) |>
+  group_by(ped_signal) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals on the Regional NHS network with Accessible Pedestrian Signals") |>
+  pivot_wider(names_from = ped_signal, values_from = count) |>
+  mutate(Total = Yes + No)
+
+severe_congestion_fgts_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_severe_congestion", "fgts_t1_t2") |>
+  mutate(ts_asc = str_replace_all(ts_asc, "Null", "No")) |>
+  mutate(ts_coordin = str_replace_all(ts_coordin, "Null", "No")) |>
+  mutate(asc_or_coord = case_when (
+    ts_asc == "Yes" & ts_coordin == "Yes" ~ "Yes",
+    ts_asc == "Yes" & ts_coordin == "No" ~ "Yes",
+    ts_asc == "No" & ts_coordin == "Yes" ~ "Yes",
+    ts_asc == "No" & ts_coordin == "No" ~ "No")) |>
+  filter(pm_severe_congestion == "Yes" & fgts_t1_t2 == "Yes")
+
+severe_congestion_fgts_tbl <- severe_congestion_fgts_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(asc_or_coord) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals on the FGTS T1 or T2 network that experience Severe congestion with Adaptive or Coordinated Signals") |>
+  pivot_wider(names_from = asc_or_coord, values_from = count) |>
+  mutate(Total = Yes + No)
+
+heavy_severe_congestion_fgts_overlay <- its |>
+  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_heavy_severe_congestion", "fgts_t1_t2") |>
+  mutate(ts_asc = str_replace_all(ts_asc, "Null", "No")) |>
+  mutate(ts_coordin = str_replace_all(ts_coordin, "Null", "No")) |>
+  mutate(asc_or_coord = case_when (
+    ts_asc == "Yes" & ts_coordin == "Yes" ~ "Yes",
+    ts_asc == "Yes" & ts_coordin == "No" ~ "Yes",
+    ts_asc == "No" & ts_coordin == "Yes" ~ "Yes",
+    ts_asc == "No" & ts_coordin == "No" ~ "No")) |>
+  filter(pm_heavy_severe_congestion == "Yes" & fgts_t1_t2 == "Yes")
+
+heavy_severe_congestion_fgts_tbl <- heavy_severe_congestion_fgts_overlay |>
+  st_drop_geometry() |>
+  mutate(count = 1) |>
+  group_by(asc_or_coord) |>
+  summarise(count = sum(count)) |>
+  as_tibble() |>
+  mutate(Metric = "Signals on the FGTS T1 or T2 network that experience Heavy or Severe congestion with Adaptive or Coordinated Signals") |>
+  pivot_wider(names_from = asc_or_coord, values_from = count) |>
+  mutate(Total = Yes + No)
+
+# Write Overlay layers to the filegdb ------------------------------------------------------
+print(str_glue("Writing the ITS overlay layers to {its_fgdb_file}"))
+st_write(its, dsn = its_fgdb_file, layer = "all_signal_overlays", append = FALSE)
+st_write(transit_overlay, dsn = its_fgdb_file, layer = "transit_overlay", append = FALSE)
+st_write(safety_overlay, dsn = its_fgdb_file, layer = "safety_overlay", append = FALSE)
+st_write(severe_congestion_overlay, dsn = its_fgdb_file, layer = "severe_congestion_overlay", append = FALSE)
+st_write(heavy_severe_congestion_overlay, dsn = its_fgdb_file, layer = "heavy_severe_congestion_overlay", append = FALSE)
+st_write(poc_overlay, dsn = its_fgdb_file, layer = "people_of_color_overlay", append = FALSE)
+st_write(pov_overlay, dsn = its_fgdb_file, layer = "people_lower_incomes_overlay", append = FALSE)
+st_write(lep_overlay, dsn = its_fgdb_file, layer = "people_limited_english_overlay", append = FALSE)
+st_write(dis_overlay, dsn = its_fgdb_file, layer = "people_with_a_disability_overlay", append = FALSE)
+st_write(yth_overlay, dsn = its_fgdb_file, layer = "people_under_18_overlay", append = FALSE)
+st_write(old_overlay, dsn = its_fgdb_file, layer = "people_over_65_overlay", append = FALSE)
+st_write(severe_congestion_fgts_overlay, dsn = its_fgdb_file, layer = "fgts_t1_t2_severe_congestion_overlay", append = FALSE)
+st_write(heavy_severe_congestion_fgts_overlay, dsn = its_fgdb_file, layer = "fgts_t1_t2_heavy_severe_congestion_overlay", append = FALSE)
+
+# Write overlay table to a csv -------------------------------------------
+print(str_glue("Writing the ITS summary tables to {its_csv_file}"))
+overlay_tbl <- bind_rows(transit_tbl, safety_tbl, 
+                         severe_congestion_tbl, heavy_severe_congestion_tbl, 
+                         poc_tbl, pov_tbl, lep_tbl, dis_tbl, yth_tbl, old_tbl, 
+                         region_ped_tbl, 
+                         severe_congestion_fgts_tbl,
+                         heavy_severe_congestion_fgts_tbl) |>
+  mutate(`Share of No` = round(No / Total, 2)) |>
+  mutate(`Share of Yes` = round(Yes / Total, 2))
+
+write_csv(overlay_tbl, its_csv_file)
