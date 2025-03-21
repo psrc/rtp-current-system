@@ -8,7 +8,7 @@ un <- Sys.getenv("USERNAME")
 data_dir <- file.path("C:/Users",str_to_lower(un),"Puget Sound Regional Council/RTP Data & Analysis - Data")
 gis_dir <- file.path("C:/Users",str_to_lower(un),"Puget Sound Regional Council/GIS - Transportation/RTP_2026")
 spatial_inputs_dir <- file.path(data_dir,"spatial-layers","input-layers")
-spatial_outputs_dir <- file.path(data_dir,"spatial-layers","output-layers")
+#spatial_outputs_dir <- file.path(data_dir,"spatial-layers","output-layers")
 options(dplyr.summarise.inform = FALSE)
 
 # Inputs ------------------------------------------------------------------
@@ -20,28 +20,36 @@ gtfs_service <- "fall"
 if (tolower(gtfs_service)=="spring") {gtfs_month = "05"} else (gtfs_month = "10")
 
 # Input File Paths -------------------------------------------------------------
-its_file <- file.path(spatial_inputs_dir, "ITS_Signals_2024_Final.shp")
+#its_file <- file.path(spatial_inputs_dir, "ITS_Signals_2024_Final.shp")
 hrn_file <- file.path(spatial_inputs_dir, "filtered_hrn.gpkg")
 efa_file <- file.path(gis_dir, "equity_focus_areas", "efa_3groupings_1sd", "equity_focus_areas_2023.csv")
 fgts_file <- file.path(gis_dir, "freight", "FGTSWA.gdb")
 
-fgdb_file <- file.path(spatial_outputs_dir,"rtp_current_system.gdb")
+fgdb_file <- file.path(gis_dir,"transit","Transit_Network_2024.gdb")
 congestion_fgdb_file <- file.path(gis_dir,"congestion","rtp_current_system_congestion.gdb")
+its_input_fgdb_file <- file.path(gis_dir,"its_overlays","ITS_Signals_2024_Final.gdb")
 its_fgdb_file <- file.path(gis_dir,"its_overlays","rtp_current_system_its_overlays.gdb")
 its_csv_file <- file.path(gis_dir,"its_overlays","rtp_current_system_its_overlays.csv")
 
 tract_lyr <- "TRACT2020"
 
-# Layers for Overlays ------------------------------------------------------------
-print(str_glue("Reading ITS signal data from {its_file}"))
-its <- read_sf(its_file) |> 
-  st_transform(spn)
+# its <- read_sf(its_file) |> 
+#   st_transform(spn) |>
+#   rename(update_2024 = "2024Update") |>
+#   rename(signal_id = "OBJECTID")
+# 
+# st_write(its, dsn = its_input_fgdb_file, layer = "its_signals_final_2024", append = FALSE)
 
-print(str_glue("Reading ITS signal data from {its_file} and creating 50' buffer for spatial intersections"))
-its_buffer <- read_sf(its_file) |> 
+# Layers for Overlays ------------------------------------------------------------
+print(str_glue("Reading ITS signal data from {its_input_fgdb_file}"))
+its <- st_read(dsn = its_input_fgdb_file, layer = "its_signals_final_2024") |> 
+  st_transform(spn) 
+
+print(str_glue("Reading ITS signal data from {its_input_fgdb_file} and creating 50' buffer for spatial intersections"))
+its_buffer <- st_read(dsn = its_input_fgdb_file, layer = "its_signals_final_2024") |> 
   st_transform(spn) |> 
   st_buffer(dist = 50) |>
-  select("OBJECTID")
+  select("signal_id")
 
 print(str_glue("Loading Transit Route layer from {fgdb_file} and trimming to frequent transit"))
 frequent_transit <- st_read(dsn = fgdb_file, layer = paste0("transit_routes_", gtfs_service, "_", gtfs_year)) |> 
@@ -80,122 +88,119 @@ fgts <- st_read(dsn = fgts_file, layer = "FGTSWA") |>
 # Spatial Intersections ---------------------------------------------------
 print(str_glue("Intersecting the ITS layer with Frequent Transit Routes"))
 i <- st_intersection(its_buffer, frequent_transit) |>
-  select("OBJECTID") |>
+  select("signal_id") |>
   st_drop_geometry() |>
   distinct() |>
   mutate(`frequent_transit` = "Yes")
 
-its <- left_join(its, i, by  ="OBJECTID") |>
+its <- left_join(its, i, by  ="signal_id") |>
   mutate(`frequent_transit` = replace_na(`frequent_transit`, "No"))
 
 print(str_glue("Intersecting the ITS layer with the Walk & Bike subset of the High Injury Network"))
 i <- st_intersection(its_buffer, high_injury_network) |>
-  select("OBJECTID") |>
+  select("signal_id") |>
   st_drop_geometry() |>
   distinct() |>
   mutate(`high_injury_network` = "Yes")
 
-its <- left_join(its, i, by  ="OBJECTID") |>
+its <- left_join(its, i, by  ="signal_id") |>
   mutate(`high_injury_network` = replace_na(`high_injury_network`, "No"))
 
 print(str_glue("Intersecting the ITS layer with the PM Peak Severe Congestion"))
 i <- st_intersection(its_buffer, roadway_congestion |> filter(pm_congestion == "Severe")) |>
-  select("OBJECTID") |>
+  select("signal_id") |>
   st_drop_geometry() |>
   distinct() |>
   mutate(`pm_severe_congestion` = "Yes")
 
-its <- left_join(its, i, by  ="OBJECTID") |>
+its <- left_join(its, i, by  ="signal_id") |>
   mutate(`pm_severe_congestion` = replace_na(`pm_severe_congestion`, "No"))
 
 print(str_glue("Intersecting the ITS layer with the PM Peak Heavy & Severe Congestion"))
 i <- st_intersection(its_buffer, roadway_congestion) |>
-  select("OBJECTID") |>
+  select("signal_id") |>
   st_drop_geometry() |>
   distinct() |>
   mutate(`pm_heavy_severe_congestion` = "Yes")
 
-its <- left_join(its, i, by  ="OBJECTID") |>
+its <- left_join(its, i, by  ="signal_id") |>
   mutate(`pm_heavy_severe_congestion` = replace_na(`pm_heavy_severe_congestion`, "No"))
 
 print(str_glue("Intersecting the ITS layer with the FGTS network"))
 i <- st_intersection(its_buffer, fgts) |>
   filter(FGTSClass %in% c("T-1", "T-2")) |>
-  select("OBJECTID") |>
+  select("signal_id") |>
   st_drop_geometry() |>
   distinct() |>
   mutate(`fgts_t1_t2` = "Yes")
 
-its <- left_join(its, i, by  ="OBJECTID") |>
+its <- left_join(its, i, by  ="signal_id") |>
   mutate(`fgts_t1_t2` = replace_na(`fgts_t1_t2`, "No"))
 
 print(str_glue("Intersecting the ITS layer with People of Color Equity Focus Areas"))
 i <- st_intersection(its_buffer, efa_tracts |> filter(efa_poc >0)) |>
-  select("OBJECTID") |>
+  select("signal_id") |>
   st_drop_geometry() |>
   distinct() |>
   mutate(`efa_poc` = "Yes")
 
-its <- left_join(its, i, by  ="OBJECTID") |>
+its <- left_join(its, i, by  ="signal_id") |>
   mutate(`efa_poc` = replace_na(`efa_poc`, "No"))
 
 print(str_glue("Intersecting the ITS layer with People with Limited Income Equity Focus Areas"))
 i <- st_intersection(its_buffer, efa_tracts |> filter(efa_pov200 >0)) |>
-  select("OBJECTID") |>
+  select("signal_id") |>
   st_drop_geometry() |>
   distinct() |>
   mutate(`efa_pov` = "Yes")
 
-its <- left_join(its, i, by  ="OBJECTID") |>
+its <- left_join(its, i, by  ="signal_id") |>
   mutate(`efa_pov` = replace_na(`efa_pov`, "No"))
 
 print(str_glue("Intersecting the ITS layer with People with Limited English Proficiency Equity Focus Areas"))
 i <- st_intersection(its_buffer, efa_tracts |> filter(efa_lep >0)) |>
-  select("OBJECTID") |>
+  select("signal_id") |>
   st_drop_geometry() |>
   distinct() |>
   mutate(`efa_lep` = "Yes")
 
-its <- left_join(its, i, by  ="OBJECTID") |>
+its <- left_join(its, i, by  ="signal_id") |>
   mutate(`efa_lep` = replace_na(`efa_lep`, "No"))
 
 print(str_glue("Intersecting the ITS layer with People with a Disability Equity Focus Areas"))
 i <- st_intersection(its_buffer, efa_tracts |> filter(efa_dis >0)) |>
-  select("OBJECTID") |>
+  select("signal_id") |>
   st_drop_geometry() |>
   distinct() |>
   mutate(`efa_dis` = "Yes")
 
-its <- left_join(its, i, by  ="OBJECTID") |>
+its <- left_join(its, i, by  ="signal_id") |>
   mutate(`efa_dis` = replace_na(`efa_dis`, "No"))
 
 print(str_glue("Intersecting the ITS layer with Youth Equity Focus Areas"))
 i <- st_intersection(its_buffer, efa_tracts |> filter(efa_youth >0)) |>
-  select("OBJECTID") |>
+  select("signal_id") |>
   st_drop_geometry() |>
   distinct() |>
   mutate(`efa_yth` = "Yes")
 
-its <- left_join(its, i, by  ="OBJECTID") |>
+its <- left_join(its, i, by  ="signal_id") |>
   mutate(`efa_yth` = replace_na(`efa_yth`, "No"))
 
 print(str_glue("Intersecting the ITS layer with Older Adults Equity Focus Areas"))
 i <- st_intersection(its_buffer, efa_tracts |> filter(efa_older >0)) |>
-  select("OBJECTID") |>
+  select("signal_id") |>
   st_drop_geometry() |>
   distinct() |>
   mutate(`efa_old` = "Yes")
 
-its <- left_join(its, i, by  ="OBJECTID") |>
+its <- left_join(its, i, by  ="signal_id") |>
   mutate(`efa_old` = replace_na(`efa_old`, "No"))
-
-its <- its |>
-  rename(update_2024 = "2024Update")
 
 # Overlay Layers ----------------------------------------------------------
 print(str_glue("Creating ITS overlay layers and summary tables"))
 transit_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "tsp", "frequent_transit") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "tsp", "frequent_transit") |>
   mutate(tsp = str_replace_all(tsp, "Null", "No")) |>
   filter(frequent_transit == "Yes")
 
@@ -210,7 +215,7 @@ transit_tbl <- transit_overlay |>
   mutate(Total = Yes + No)
 
 safety_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", "high_injury_network") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "ped_signal", "high_injury_network") |>
   mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
   filter(high_injury_network == "Yes")
 
@@ -225,7 +230,7 @@ safety_tbl <- safety_overlay |>
   mutate(Total = Yes + No)
 
 severe_congestion_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_severe_congestion") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_severe_congestion") |>
   mutate(ts_asc = str_replace_all(ts_asc, "Null", "No")) |>
   mutate(ts_coordin = str_replace_all(ts_coordin, "Null", "No")) |>
   mutate(asc_or_coord = case_when (
@@ -246,7 +251,7 @@ severe_congestion_tbl <- severe_congestion_overlay |>
   mutate(Total = Yes + No)
 
 heavy_severe_congestion_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_heavy_severe_congestion") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_heavy_severe_congestion") |>
   mutate(ts_asc = str_replace_all(ts_asc, "Null", "No")) |>
   mutate(ts_coordin = str_replace_all(ts_coordin, "Null", "No")) |>
   mutate(asc_or_coord = case_when (
@@ -267,7 +272,7 @@ heavy_severe_congestion_tbl <- heavy_severe_congestion_overlay |>
   mutate(Total = Yes + No)
 
 poc_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_of_color = "efa_poc") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "ped_signal", people_of_color = "efa_poc") |>
   mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
   filter(people_of_color == "Yes")
 
@@ -282,7 +287,7 @@ poc_tbl <- poc_overlay |>
   mutate(Total = Yes + No)
 
 pov_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_lower_incomes = "efa_pov") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "ped_signal", people_lower_incomes = "efa_pov") |>
   mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
   filter(people_lower_incomes == "Yes")
 
@@ -297,7 +302,7 @@ pov_tbl <- pov_overlay |>
   mutate(Total = Yes + No)
 
 lep_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_limited_english = "efa_lep") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "ped_signal", people_limited_english = "efa_lep") |>
   mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
   filter(people_limited_english == "Yes")
 
@@ -312,7 +317,7 @@ lep_tbl <- lep_overlay |>
   mutate(Total = Yes + No)
 
 dis_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_with_a_disability = "efa_dis") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "ped_signal", people_with_a_disability = "efa_dis") |>
   mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
   filter(people_with_a_disability == "Yes")
 
@@ -327,7 +332,7 @@ dis_tbl <- dis_overlay |>
   mutate(Total = Yes + No)
 
 yth_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_under_18 = "efa_yth") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "ped_signal", people_under_18 = "efa_yth") |>
   mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
   filter(people_under_18 == "Yes")
 
@@ -342,7 +347,7 @@ yth_tbl <- yth_overlay |>
   mutate(Total = Yes + No)
 
 old_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ped_signal", people_over_65 = "efa_old") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "ped_signal", people_over_65 = "efa_old") |>
   mutate(ped_signal = str_replace_all(ped_signal, "Null", "No")) |>
   filter(people_over_65 == "Yes")
 
@@ -368,7 +373,7 @@ region_ped_tbl <- its |>
   mutate(Total = Yes + No)
 
 severe_congestion_fgts_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_severe_congestion", "fgts_t1_t2") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_severe_congestion", "fgts_t1_t2") |>
   mutate(ts_asc = str_replace_all(ts_asc, "Null", "No")) |>
   mutate(ts_coordin = str_replace_all(ts_coordin, "Null", "No")) |>
   mutate(asc_or_coord = case_when (
@@ -389,7 +394,7 @@ severe_congestion_fgts_tbl <- severe_congestion_fgts_overlay |>
   mutate(Total = Yes + No)
 
 heavy_severe_congestion_fgts_overlay <- its |>
-  select("OBJECTID", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_heavy_severe_congestion", "fgts_t1_t2") |>
+  select("signal_id", "city_name", "cnty_name", "majorst_1", "ts_asc", "ts_coordin", "pm_heavy_severe_congestion", "fgts_t1_t2") |>
   mutate(ts_asc = str_replace_all(ts_asc, "Null", "No")) |>
   mutate(ts_coordin = str_replace_all(ts_coordin, "Null", "No")) |>
   mutate(asc_or_coord = case_when (
