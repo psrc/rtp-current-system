@@ -87,48 +87,6 @@ spatial_intersections <- function(lyr, lyr_name, buffer, buffer_name, buffer_des
   
 }
 
-spatial_intersection_v2 <- function(lyr, lyr_name, buffer, buffer_name, buffer_description, fgb_file = freight_layers_file) {
-  
-  print(str_glue("Intersecting the {lyr_name} network with the {buffer_name} network"))
-  i <- suppressWarnings(st_intersection(lyr, buffer))
-  
-  print(str_glue("Calculating the length of the {lyr_name} network that intersects with the {buffer_name} network"))
-  i <- i |>
-    mutate(len = as.numeric(set_units(st_length(i), "mi"))) |>
-    filter(len >= (min_overlap/5280))
-  
-  i <- i |>
-    select("index", "road", cat = "cat.1", "len") |>
-    mutate(!!buffer_name := buffer_description) |>
-    arrange(index, desc(len)) |>
-    distinct(index, .keep_all = TRUE)
-  
-  print(str_glue("Converting the {lyr_name} and {buffer_name} intersected network to a multilinestring"))
-  i <- suppressWarnings(st_cast(i, "MULTILINESTRING"))
-  
-  print(str_glue("Writing the {lyr_name} and {buffer_name} intersected network to the {fgb_file} folder"))
-  st_write(i, dsn = file.path(fgb_file, paste0(lyr_name, "_", buffer_name, ".shp")), append = FALSE)
-  
-  var_name <- paste0("Miles on ", str_to_title(str_replace_all(buffer_name, "_", " ")))
-  
-  t <- i |>
-    st_drop_geometry() |>
-    group_by(cat) |>
-    summarise(!!var_name := round(sum(len),0)) |>
-    as_tibble()
-  
-  r <- t |>
-    mutate(cat = "Totals") |>
-    group_by(cat) |>
-    summarise(!!var_name := round(sum(.data[[var_name]]),0)) |>
-    as_tibble()
-  
-  t <- bind_rows(t,r)
-  
-  return(t)
-  
-}
-
 # Layers for Freight Overlays ------------------------------------------------------------
 print(str_glue("Loading the FGTS layer from {congestion_fgdb_file} and trimming to PSRC Region"))
 fgts <- st_read(dsn = fgts_file, layer = "FGTSWA") |> 
@@ -278,23 +236,39 @@ print(str_glue("Writing the Freight summary tables to {freight_csv_file}"))
 write_csv(fgts_summary, freight_csv_file)
 
 # High Injury Network & FGTS -----------------------------------------------------
+print(str_glue("Intersecting the High Injury Network with the FGTS network"))
+i <- suppressWarnings(st_intersection(high_injury_network, fgts_buffer))
+
+i <- i |> select("index", "road", cat = "cat.1")
+i <- i |>  mutate(len = as.numeric(set_units(st_length(i), "mi"))) 
+i <- i |> 
+  mutate(id = paste0(index,"_",cat)) |>
+  arrange(id, desc(len)) |> 
+  distinct(id, .keep_all = TRUE)
+
+i <- suppressWarnings(st_cast(i, "MULTILINESTRING"))
+st_write(i, dsn = file.path(freight_layers_file, paste0("hin_fgts.shp")), append = FALSE)
+
+var_name <- paste0("Miles on ", str_to_title(str_replace_all(buffer_name, "_", " ")))
+
+t <- i |>
+  st_drop_geometry() |>
+  group_by(cat) |>
+  summarise(`Miles of FGTS` = round(sum(len),0)) |>
+  as_tibble()
+
+r <- t |>
+  mutate(cat = "Totals") |>
+  group_by(cat) |>
+  summarise(!!var_name := round(sum(.data[[var_name]]),0)) |>
+  as_tibble()
+
+t <- bind_rows(t,r)
+
+
+
+
 l <- spatial_intersections(lyr = high_injury_network, buffer = fgts_buffer, lyr_name = "hin", buffer_name = "fgts", fgb_file = freight_layers_file, buffer_description = "FGTS Network")
 hin_summary <- left_join(hin_summary, l |> filter(cat != "Totals"), by="cat") |>
   mutate(`% on Fgts` = `Miles on Fgts` / round(`Total Centerline Miles`, 3))
 rm(l)
-
-# High Injury Network & Frequent Transit -----------------------------------------------------
-l <- spatial_intersections(lyr = high_injury_network, buffer = frequent_transit_buffer, lyr_name = "hin", buffer_name = "transit", fgb_file = freight_layers_file, buffer_description = frequent_description)
-hin_summary <- left_join(hin_summary, l |> filter(cat != "Totals"), by="cat") |>
-  mutate(`% on Transit` = `Miles on Transit` / round(`Total Centerline Miles`, 3))
-rm(l)
-
-# High Injury Network & Heavy & Severe Congestion -----------------------------------------------------
-l <- spatial_intersections(lyr = high_injury_network, buffer = roadway_congestion_buffer |> filter(pm_congestion %in% c("Heavy","Severe")), lyr_name = "hin", buffer_name = "hvy_cong", fgb_file = freight_layers_file, buffer_description = hvy_description)
-hin_summary <- left_join(hin_summary, l |> filter(cat != "Totals"), by="cat") |>
-  mutate(`% on Hvy Cong` = `Miles on Hvy Cong` / round(`Total Centerline Miles`, 3))
-rm(l)
-
-
-
-
