@@ -101,6 +101,7 @@ write_csv(transit_agency_boardings, file.path(tables_dir, "transit_boardings_by_
 vmt_outputs <- NULL
 for (y in model_years) {
   
+  model_dir <- file.path(data_dir, "model", y)
   network_outputs_file <- file.path(model_dir, "network_results.csv")
 
   print(str_glue("Opening the {y} {network_outputs_file} file"))
@@ -165,7 +166,7 @@ for (y in model_years) {
     mutate(Total = round(Total, -3)) |>
     pivot_longer(cols = !c(County, `Time of Day`), names_to = "Mode", values_to = "Estimate") |>
     pivot_wider(names_from = c(County), values_from = Estimate) |>
-    select("Time of Day", "Mode", "Region", "King", "Kitsap", "Pierce", "Snohomish") |>
+    select("Mode", "Time of Day", "Region", "King", "Kitsap", "Pierce", "Snohomish") |>
     mutate(`Time of Day` = factor(`Time of Day`, levels = c("Daily", "Peak", "Off-Peak"))) |>
     mutate(Mode = factor(Mode, levels = c("Total", "Passenger Vehicles", "Medium Trucks", "Heavy Trucks", "Buses"))) |>
     arrange(`Time of Day`, Mode) |>
