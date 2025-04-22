@@ -32,21 +32,34 @@ transit_overlay_calc <- function(density_lvl, transit_type, hex_file, buffer_fil
   if(transit_type == "High Capacity Transit") {transit_attr <- "hct"}
   
   print(str_glue("Hex grids with a density greater than or equal to {density_lvl} activity units per acre"))
-  s <- hex_file |> 
-    filter(density >= density_lvl) |>
-    select("id", "population", "jobs", "activity_units", "density") |>
-    st_drop_geometry() |>
-    distinct() |>
-    mutate(density_threshold = transit_type) |>
-    group_by(density_threshold) |>
-    summarize(population = sum(population), jobs = sum(jobs), activity_units = sum(activity_units)) |>
-    as_tibble() |>
-    mutate(Variable = paste0("Total people and jobs in areas with a density that supports ", str_to_lower(transit_type))) |>
-    mutate(`Equity Focus Area` = efa)
-  
-  total_people_in_transit_hex <- s |> select("population") |> pull()
-  total_jobs_in_transit_hex <- s |> select("jobs") |> pull()
-  total_activity_units_in_transit_hex <- s |> select("activity_units") |> pull()
+  if (length(hex_file |> filter(density >= density_lvl) |> select("id") |> pull()) >0) {
+    
+    s <- hex_file |> 
+      filter(density >= density_lvl) |>
+      select("id", "population", "jobs", "activity_units", "density") |>
+      st_drop_geometry() |>
+      distinct() |>
+      mutate(density_threshold = transit_type) |>
+      group_by(density_threshold) |>
+      summarize(population = sum(population), jobs = sum(jobs), activity_units = sum(activity_units)) |>
+      as_tibble() |>
+      mutate(Variable = paste0("Total people and jobs in areas with a density that supports ", str_to_lower(transit_type))) |>
+      mutate(`Equity Focus Area` = efa)
+    
+    total_people_in_transit_hex <- s |> select("population") |> pull()
+    total_jobs_in_transit_hex <- s |> select("jobs") |> pull()
+    total_activity_units_in_transit_hex <- s |> select("activity_units") |> pull()
+    
+  } else {
+    
+    s <- as_tibble(data.frame(density_threshold = transit_type, population=0, jobs=0, activity_units=0, 
+                    Variable = paste0("Total people and jobs in areas with a density that supports ", str_to_lower(transit_type)), 
+                    `Equity Focus Area` = efa)) |>
+      rename(`Equity Focus Area` = "Equity.Focus.Area")
+    total_people_in_transit_hex <- s |> select("population") |> pull()
+    total_jobs_in_transit_hex <- s |> select("jobs") |> pull()
+    total_activity_units_in_transit_hex <- s |> select("activity_units") |> pull()
+  }
   
   print(str_glue("Hex grids with a density less than {density_lvl} activity units per acre"))
   ns <- hex_file |> 
@@ -60,7 +73,6 @@ transit_overlay_calc <- function(density_lvl, transit_type, hex_file, buffer_fil
     as_tibble() |>
     mutate(Variable = paste0("Total people and jobs in areas with a density that does not support ", str_to_lower(transit_type))) |>
     mutate(`Equity Focus Area` = efa)
-  
   
   total_people_not_in_transit_hex <- ns |> select("population") |> pull()
   total_jobs_not_in_transit_hex <- ns |> select("jobs") |> pull()
@@ -93,20 +105,35 @@ transit_overlay_calc <- function(density_lvl, transit_type, hex_file, buffer_fil
            "Variable", "Equity Focus Area")
   
   print(str_glue("Intersecting {transit_type} buffers with hex grids with a density greater than or equal to {density_lvl}"))
-  i <- suppressWarnings(st_intersection(hex_file |> filter(density >= density_lvl), buffer_file |> filter(.data[[transit_attr]] == 1))) |>
-    select("id", "population", "jobs", "activity_units", "density") |>
-    st_drop_geometry() |>
-    distinct() |>
-    mutate(density_threshold = transit_type) |>
-    group_by(density_threshold) |>
-    summarize(population = sum(population), jobs = sum(jobs), activity_units = sum(activity_units)) |>
-    as_tibble() |>
-    mutate(Variable = paste0("Total people and jobs in areas with a density that supports ", str_to_lower(transit_type), " that are near ", str_to_lower(transit_type))) |>
-    mutate(`Equity Focus Area` = efa)
+  if (length(suppressWarnings(st_intersection(hex_file |> filter(density >= density_lvl), buffer_file |> filter(.data[[transit_attr]] == 1))) |> select("id") |> pull()) >0) {
   
-  total_people_near_transit <- i |> select("population") |> pull()
-  total_jobs_near_transit <- i |> select("jobs") |> pull()
-  total_activity_units_near_transit <- i |> select("activity_units") |> pull()
+      i <- suppressWarnings(st_intersection(hex_file |> filter(density >= density_lvl), buffer_file |> filter(.data[[transit_attr]] == 1))) |>
+        select("id", "population", "jobs", "activity_units", "density") |>
+        st_drop_geometry() |>
+        distinct() |>
+        mutate(density_threshold = transit_type) |>
+        group_by(density_threshold) |>
+        summarize(population = sum(population), jobs = sum(jobs), activity_units = sum(activity_units)) |>
+        as_tibble() |>
+        mutate(Variable = paste0("Total people and jobs in areas with a density that supports ", str_to_lower(transit_type), " that are near ", str_to_lower(transit_type))) |>
+        mutate(`Equity Focus Area` = efa)
+  
+      total_people_near_transit <- i |> select("population") |> pull()
+      total_jobs_near_transit <- i |> select("jobs") |> pull()
+      total_activity_units_near_transit <- i |> select("activity_units") |> pull()
+    
+  } else {
+    
+    i <- as_tibble(data.frame(density_threshold = transit_type, population=0, jobs=0, activity_units=0, 
+                              Variable = paste0("Total people and jobs in areas with a density that supports ", str_to_lower(transit_type), " that are near ", str_to_lower(transit_type)), 
+                              `Equity Focus Area` = efa)) |>
+      rename(`Equity Focus Area` = "Equity.Focus.Area")
+    
+    total_people_near_transit <- i |> select("population") |> pull()
+    total_jobs_near_transit <- i |> select("jobs") |> pull()
+    total_activity_units_near_transit <- i |> select("activity_units") |> pull()
+    
+  }
   
   print(str_glue("Adding percentages to hex calculations for supportive Hexs with service"))
   i <- i |>
@@ -131,7 +158,10 @@ transit_overlay_calc <- function(density_lvl, transit_type, hex_file, buffer_fil
     mutate(`Equity Focus Area` = efa) |>
     select("Transit Type", "Population", "% Population", "Jobs", "% Jobs", "Activity Units", "% Activity Units", "Variable", "Equity Focus Area")
   
-  summary_data <- bind_rows(s, ns, i, ni) 
+  summary_data <- bind_rows(s, ns, i, ni) |>
+    mutate(`% Population` = replace_na(`% Population`, 0)) |>
+    mutate(`% Jobs` = replace_na(`% Jobs`, 0)) |>
+    mutate(`% Activity Units` = replace_na(`% Activity Units`, 0))
   
   return(summary_data)
   
@@ -144,6 +174,10 @@ safety_fgdb_file <- file.path(gis_dir,"safety","high_injury_networks_2024.gdb")
 density_fgdb_file <- file.path(gis_dir,"activity_units","Activity_Units_2026_RTP.gdb")
 
 tract_lyr <- "TRACT2020"
+county_lyr <- "COUNTY_BACKGROUND"
+rgc_lyr <- "URBAN_CENTERS"
+mic_lyr <- "MICEN"
+regeo_lyr <- "REGIONAL_GEOGRAPHIES"
 
 transit_csv_file <- file.path(gis_dir,"transit","rtp_current_system_transit_typology_summary.csv")
 
@@ -174,11 +208,28 @@ activity_units <- st_read(dsn = density_fgdb_file, layer = "peope_and_jobs_2024"
   st_transform(spn) |>
   select(id = "GRID_ID", population = "sum_pop_20", jobs = "sum_jobs_2", activity_units = "sum_au_202", density = "au_acre")
 
-# Transit Overlays: Total Population ---------------------------------------------------
-local_transit <- transit_overlay_calc(density_lvl = local_transit_density, transit_type = "Local Transit", hex_file = activity_units, buffer_file = transit_buffers, efa = "Total Population")
-all_day_transit <- transit_overlay_calc(density_lvl = all_day_transit_density, transit_type = "All Day Transit", hex_file = activity_units, buffer_file = transit_buffers, efa = "Total Population")
-frequent_transit <- transit_overlay_calc(density_lvl = frequent_transit_density, transit_type = "Frequent Transit", hex_file = activity_units, buffer_file = transit_buffers, efa = "Total Population")
-high_capacity_transit <- transit_overlay_calc(density_lvl = hct_transit_density, transit_type = "High Capacity Transit", hex_file = activity_units, buffer_file = transit_buffers, efa = "Total Population")
+print(str_glue("Loading the County layer from {county_lyr}"))
+county <- st_read_elmergeo(county_lyr, project_to_wgs84 = FALSE) |> 
+  filter(psrc == 1) |>
+  select(county = "county_nm")
+
+print(str_glue("Loading the Regional Geography layer from {regeo_lyr}"))
+rgeo <- st_read_elmergeo(regeo_lyr, project_to_wgs84 = FALSE) |> 
+  select(regeo = "class_desc")
+
+print(str_glue("Loading the Regional Growth Center layer from {rgc_lyr}"))
+rgc <- st_read_elmergeo(rgc_lyr, project_to_wgs84 = FALSE) |> 
+  select(rgc = "category")
+
+print(str_glue("Loading the Manufacturing & Industrial Center layer from {mic_lyr}"))
+mic <- st_read_elmergeo(mic_lyr, project_to_wgs84 = FALSE) |> 
+  select(mic = "category")
+
+# Transit Overlays: Region Population ---------------------------------------------------
+local_transit <- transit_overlay_calc(density_lvl = local_transit_density, transit_type = "Local Transit", hex_file = activity_units, buffer_file = transit_buffers, efa = "Region Population")
+all_day_transit <- transit_overlay_calc(density_lvl = all_day_transit_density, transit_type = "All Day Transit", hex_file = activity_units, buffer_file = transit_buffers, efa = "Region Population")
+frequent_transit <- transit_overlay_calc(density_lvl = frequent_transit_density, transit_type = "Frequent Transit", hex_file = activity_units, buffer_file = transit_buffers, efa = "Region Population")
+high_capacity_transit <- transit_overlay_calc(density_lvl = hct_transit_density, transit_type = "High Capacity Transit", hex_file = activity_units, buffer_file = transit_buffers, efa = "Region Population")
 transit_overlay_data <- bind_rows(local_transit, all_day_transit, frequent_transit, high_capacity_transit)
 rm(local_transit, all_day_transit, frequent_transit, high_capacity_transit)
 
@@ -265,6 +316,78 @@ frequent_transit <- transit_overlay_calc(density_lvl = frequent_transit_density,
 high_capacity_transit <- transit_overlay_calc(density_lvl = hct_transit_density, transit_type = "High Capacity Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = "People over 65")
 transit_overlay_data <- bind_rows(transit_overlay_data, local_transit, all_day_transit, frequent_transit, high_capacity_transit)
 rm(local_transit, all_day_transit, frequent_transit, high_capacity_transit)
+
+# Transit Overlays: County ---------------------------------------
+for (county_name in unique(county$county)) {
+  
+  efa_overlay_hexes <- suppressWarnings(st_intersection(activity_units, county |> filter(county == county_name))) |>
+    st_drop_geometry() |>
+    select("id") |>
+    distinct() |>
+    pull()
+  
+  local_transit <- transit_overlay_calc(density_lvl = local_transit_density, transit_type = "Local Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(county_name, " County"))
+  all_day_transit <- transit_overlay_calc(density_lvl = all_day_transit_density, transit_type = "All Day Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(county_name, " County"))
+  frequent_transit <- transit_overlay_calc(density_lvl = frequent_transit_density, transit_type = "Frequent Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(county_name, " County"))
+  high_capacity_transit <- transit_overlay_calc(density_lvl = hct_transit_density, transit_type = "High Capacity Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(county_name, " County"))
+  transit_overlay_data <- bind_rows(transit_overlay_data, local_transit, all_day_transit, frequent_transit, high_capacity_transit)
+  rm(local_transit, all_day_transit, frequent_transit, high_capacity_transit)
+  
+}
+
+# Transit Overlays: Regional Geography ---------------------------------------
+for (regeo_name in unique(rgeo$regeo)) {
+  
+  efa_overlay_hexes <- suppressWarnings(st_intersection(activity_units, rgeo |> filter(regeo == regeo_name))) |>
+    st_drop_geometry() |>
+    select("id") |>
+    distinct() |>
+    pull()
+  
+  local_transit <- transit_overlay_calc(density_lvl = local_transit_density, transit_type = "Local Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(regeo_name))
+  all_day_transit <- transit_overlay_calc(density_lvl = all_day_transit_density, transit_type = "All Day Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(regeo_name))
+  frequent_transit <- transit_overlay_calc(density_lvl = frequent_transit_density, transit_type = "Frequent Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(regeo_name))
+  high_capacity_transit <- transit_overlay_calc(density_lvl = hct_transit_density, transit_type = "High Capacity Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(regeo_name))
+  transit_overlay_data <- bind_rows(transit_overlay_data, local_transit, all_day_transit, frequent_transit, high_capacity_transit)
+  rm(local_transit, all_day_transit, frequent_transit, high_capacity_transit)
+  
+}  
+
+# Transit Overlays: Regional Growth Centers ---------------------------------------
+for (rgc_name in unique(rgc$rgc)) {
+  
+  efa_overlay_hexes <- suppressWarnings(st_intersection(activity_units, rgc |> filter(rgc == rgc_name))) |>
+    st_drop_geometry() |>
+    select("id") |>
+    distinct() |>
+    pull()
+  
+  local_transit <- transit_overlay_calc(density_lvl = local_transit_density, transit_type = "Local Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(rgc_name, " Regional Growth Centers"))
+  all_day_transit <- transit_overlay_calc(density_lvl = all_day_transit_density, transit_type = "All Day Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(rgc_name, " Regional Growth Centers"))
+  frequent_transit <- transit_overlay_calc(density_lvl = frequent_transit_density, transit_type = "Frequent Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(rgc_name, " Regional Growth Centers"))
+  high_capacity_transit <- transit_overlay_calc(density_lvl = hct_transit_density, transit_type = "High Capacity Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(rgc_name, " Regional Growth Centers"))
+  transit_overlay_data <- bind_rows(transit_overlay_data, local_transit, all_day_transit, frequent_transit, high_capacity_transit)
+  rm(local_transit, all_day_transit, frequent_transit, high_capacity_transit)
+  
+}  
+
+# Transit Overlays: Manufacturing & Industrial Centers ---------------------------------------
+for (mic_name in unique(mic$mic)) {
+  
+  efa_overlay_hexes <- suppressWarnings(st_intersection(activity_units, mic |> filter(mic == mic_name))) |>
+    st_drop_geometry() |>
+    select("id") |>
+    distinct() |>
+    pull()
+  
+  local_transit <- transit_overlay_calc(density_lvl = local_transit_density, transit_type = "Local Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(mic_name, " Manufacturing & Industrial Centers"))
+  all_day_transit <- transit_overlay_calc(density_lvl = all_day_transit_density, transit_type = "All Day Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(mic_name, " Manufacturing & Industrial Centers"))
+  frequent_transit <- transit_overlay_calc(density_lvl = frequent_transit_density, transit_type = "Frequent Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(mic_name, " Manufacturing & Industrial Centers"))
+  high_capacity_transit <- transit_overlay_calc(density_lvl = hct_transit_density, transit_type = "High Capacity Transit", hex_file = activity_units |> filter(id %in% efa_overlay_hexes), buffer_file = transit_buffers, efa = paste0(mic_name, " Manufacturing & Industrial Centers"))
+  transit_overlay_data <- bind_rows(transit_overlay_data, local_transit, all_day_transit, frequent_transit, high_capacity_transit)
+  rm(local_transit, all_day_transit, frequent_transit, high_capacity_transit)
+  
+}  
 
 # Final Service Summary ---------------------------------------------------
 print(str_glue("Writing the Transit summary tables to {transit_csv_file}"))
