@@ -1,0 +1,65 @@
+---
+title: "Activity Units Overlays"
+format: html
+editor: visual
+---
+
+```{r setup}
+library(tidyverse)
+library(gt)
+library(openxlsx)
+```
+
+```{r}
+output_path <- "J:\\Staff\\Christy\\GIS\\popemp-density\\output"
+df <- read.xlsx(file.path(output_path, "specialized-mod-overlay.xlsx"))
+
+levels <- c("Community Transit (Zip Alderwood)", 
+            "King County Metro (Metro Flex)",
+            "Kitsap Transit (On Demand Service)",
+            "Pierce Transit (Runner)",
+            "Community Transit (Zip North Snohomish)",
+            "King County Metro (Metro Flex Northshore)",
+            "Outside Specialized Transportation Areas")
+
+df2 <- df |> 
+  mutate(label = factor(name, levels = levels)) |> 
+  arrange(label)
+```
+
+```{r}
+df_display <- df2 |> 
+  gt(rowname_col = "name") |> 
+  cols_hide(label) |> 
+  tab_header(title = "Microtransit Service Areas by Agency",
+             subtitle = "Activity Units in 2024") |> 
+  tab_spanner(
+    label = "2024",
+    columns = c("population_2024", "jobs_2024", "total_au_2024")
+  ) |> 
+  tab_stubhead(label = "Agency") |> 
+  cols_label(
+    population_2024 = "Population",
+    jobs_2024 = "Jobs",
+    total_au_2024 = "Total Activity Units"
+  ) |> 
+  cols_align(
+    align = "center",
+    columns = c("population_2024", "jobs_2024", "total_au_2024")
+  ) |> 
+  fmt_number(
+    columns = c("population_2024", "jobs_2024", "total_au_2024"),
+    decimals = 0
+  ) |> 
+  tab_footnote(
+    footnote = "Service launched in 2024",
+    locations = cells_stub(rows = c(
+      "Community Transit (Zip North Snohomish)", "King County Metro (Metro Flex Northshore)"))
+    )
+
+df_display
+```
+
+```{r, eval=FALSE}
+df_display |> gtsave(file.path(output_path, "specialized-mod-overlay.png"), expand = 10)
+```

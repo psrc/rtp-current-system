@@ -6,9 +6,10 @@
 
 library(tidyverse)
 library(sf)
+library(openxlsx)
 
 un <- Sys.getenv("USERNAME")
-gis_dir <- file.path("C:/Users",str_to_lower(un),"Puget Sound Regional Council/GIS - RTP_2026")
+gis_dir <- file.path("C:/Users",str_to_lower(un),"Puget Sound Regional Council/GIS - Sharing/Projects/Transportation/RTP_2026")
 options(dplyr.summarise.inform = FALSE)
 
 # Inputs ----
@@ -19,14 +20,15 @@ spn <- 2285
 ## people_and_jobs_2024 ----
 
 au_file <- file.path(gis_dir, "activity_units", "Activity_Units_2026_RTP.gdb")
-au <- st_read(dsn = au_file, layer = "peope_and_jobs_2024")
+au <- st_read(dsn = au_file, layer = "peope_and_jobs_2024")|> 
+  st_transform(spn)
 
 # transit supportive areas
 # filter for >= 7 units/acre
 au_min <- au |> 
   filter(au_acre >= 7)
 
-## specialized transportation\2023_Specialized Transportation Coverage ----
+## MOD ----
 # Database	C:\Users\CLam\Puget Sound Regional Council\GIS - RTP_2026\mod\MODInventory.gdb, features do not read-in. Use J drive copy
 # original db
 # mod_inventory <- file.path(gis_dir, "mod", "MODInventory.gdb") 
@@ -57,7 +59,9 @@ df_summary <- df |>
   st_drop_geometry() |> 
   group_by(name) |> 
   summarise(population_2024 = sum(sum_pop_20), jobs_2024 = sum(sum_jobs_2)) |> 
-  mutate(name = ifelse(is.na(name), "Outside Specialized Transportation Areas", name))
-  
+  mutate(name = ifelse(is.na(name), "Outside Specialized Transportation Areas", name)) |> 
+  mutate(total_au_2024 = population_2024 + jobs_2024)
+
+# write.xlsx(df_summary, "J:\\Staff\\Christy\\GIS\\popemp-density\\output\\specialized-mod-overlay.xlsx")
 
 
