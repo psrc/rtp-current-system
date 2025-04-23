@@ -102,6 +102,7 @@ ada_sum_df <- ada_int |>
   summarise(across(starts_with("sum"), sum)) |> 
   rename(population_2024 = sum_pop_20, jobs_2024 = sum_jobs_2, total_au_2024 = sum_au_202)
 
+# combine tables for combined df
 df <- bind_rows(ada_df_sep, ada_sum_df) |> 
   mutate(label = str_replace_all(coverage, "(?<=[a-z])(?=[A-Z])", " ")) |> # insert space between words
   select(name = label, everything(), -coverage)
