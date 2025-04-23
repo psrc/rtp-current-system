@@ -29,7 +29,7 @@ au_min <- au |>
 proj_dir <- "J:\\Staff\\Christy\\GIS\\popemp-ada"
 ada_fgdb <- file.path(proj_dir, "2023_2024_ADA Coverage.gdb")
 ada_lyrs <- st_layers(dsn = ada_fgdb)
-
+  
 # create list of reprojected layers
 lyrs_reproj <- list()
 for(i in 1:nrow(ada_lyrs)) {
@@ -88,10 +88,25 @@ for(i in 1:length(lyrs_join)) {
 ada_df_sep <- bind_rows(lyrs_sum)
 
 # merge all 5 shapes into one & sp join to find how many are located in ADA services
+proj_fgdb <- file.path(proj_dir, "popemp-ada.gdb")
+ada_diss <- st_read(dsn = proj_fgdb, layer = "ada_all_diss") |> 
+  mutate(coverage = "Inside ADA Coverage")
 
+ada_int <- st_join(au_min, ada_diss) |> 
+  distinct() |> 
+  mutate(coverage = ifelse(is.na(coverage), "Outside ADA Coverage", coverage))
 
+ada_sum_df <- ada_int |> 
+  st_drop_geometry() |> 
+  group_by(coverage) |> 
+  summarise(across(starts_with("sum"), sum)) |> 
+  rename(population_2024 = sum_pop_20, jobs_2024 = sum_jobs_2, total_au_2024 = sum_au_202)
 
-
+df <- bind_rows(ada_df_sep, ada_sum_df) |> 
+  mutate(label = str_replace_all(coverage, "(?<=[a-z])(?=[A-Z])", " ")) |> # insert space between words
+  select(name = label, everything(), -coverage)
+  
+write.xlsx(df, "J:\\Staff\\Christy\\GIS\\popemp-density\\output\\ada-overlay.xlsx")
 
 # # write to fgdb
 # output_gdb_path <- file.path(proj_dir,"popemp-ada.gdb")  # Path to the file geodatabase folder
