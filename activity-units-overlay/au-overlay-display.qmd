@@ -7,12 +7,19 @@ execute:
   warning: false
 ---
 
-The 2024 activity units layer was filtered for any areas \>= 7 units/acre to focus on areas supportive of transit services. That output was then overlaid against a series of Microtransit MOD and ADA layers.
+::: panel-tabset
+## Analysis
+
+### Microtransit Service Areas
+
+The 2024 activity units layer was filtered for any areas \>= 7 units/acre to focus on areas supportive of transit services. That output was then overlaid against a series of Microtransit MOD and ADA layers to show that people who live in a transit supported area actually have transit access.
 
 ```{r setup}
 library(tidyverse)
 library(gt)
 library(openxlsx)
+library(leaflet)
+library(sf)
 ```
 
 ```{r}
@@ -68,6 +75,8 @@ df_display
 ```{r, eval=FALSE}
 df_display |> gtsave(file.path(output_path, "specialized-mod-overlay.png"), expand = 10)
 ```
+
+### ADA 
 
 There are significant overlaps between ADA layers. The table below summaries how many activity units are within and outside of a specific agency. There is also a total count of activity units inside the combined ADA coverage area.
 
@@ -128,3 +137,45 @@ ada_df_display <- ada_df2 |>
 
 ada_df_display
 ```
+
+```{r}
+#| echo: false
+
+wgs84 <- 4326
+ada_proj_path <- "J:\\Staff\\Christy\\GIS\\popemp-ada"
+ada_dis_shp <- st_read(dsn = file.path(ada_proj_path, "popemp-ada.gdb"), layer = "ada_all_diss") |> 
+  st_transform(wgs84)
+
+ada_map <- leaflet(ada_dis_shp) |> 
+  addProviderTiles(providers$CartoDB.Positron) |> 
+  addPolygons(weight = 1.0,
+              opacity = 1,
+              color = "#C388C2",
+              dashArray = "3",
+              fillOpacity = 0.7,
+              highlight = highlightOptions(
+                weight =1,
+                color = "#76787A",
+                dashArray ="",
+                fillOpacity = 0.7,
+                bringToFront = TRUE
+              ),
+              group = "ADA Coverage"
+  ) |> 
+  addLayersControl(overlayGroups = c("ADA Coverage"),
+                  options = layersControlOptions(collapsed = TRUE))
+
+ada_map
+```
+
+
+## Data Sources
+
+-   `Puget Sound Regional Council\GIS - Sharing\Projects\Transportation\RTP\_2026\activity\_units\Activity\_Units_2026_RTP.gdb (peope_jobs_2024)`
+
+-   `Puget Sound Regional Council\GIS - Sharing\Projects\Transportation\RTP\_2026\specialized transportation\\2023_2024_ADA Paratransit Coverage\\2023_2024_ADA Coverage\\2023_2024_ADA Coverage.gdb`
+
+-   `Puget Sound Regional Council\GIS - Sharing\Projects\Transportation\RTP\_2026\mod\MODInventory.gdb`
+
+    -   Copy is also located here `J:\Staff\Christy\GIS\popemp-density\popemp-density.gdb (Microtransit_northshore_nsno)`. This layer includes new areas launched in 2024.
+:::
