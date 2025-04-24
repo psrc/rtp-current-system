@@ -107,7 +107,7 @@ df <- bind_rows(ada_df_sep, ada_sum_df) |>
   mutate(label = str_replace_all(coverage, "(?<=[a-z])(?=[A-Z])", " ")) |> # insert space between words
   select(name = label, everything(), -coverage)
   
-write.xlsx(df, "J:\\Staff\\Christy\\GIS\\popemp-density\\output\\ada-overlay.xlsx")
+# write.xlsx(df, "J:\\Staff\\Christy\\GIS\\popemp-density\\output\\ada-overlay.xlsx")
 
 # # write to fgdb
 # output_gdb_path <- file.path(proj_dir,"popemp-ada.gdb")  # Path to the file geodatabase folder

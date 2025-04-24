@@ -2,7 +2,12 @@
 title: "Activity Units Overlays"
 format: html
 editor: visual
+execute: 
+  echo: false
+  warning: false
 ---
+
+The 2024 activity units layer was filtered for any areas \>= 7 units/acre to focus on areas supportive of transit services. That output was then overlaid against a series of Microtransit MOD and ADA layers.
 
 ```{r setup}
 library(tidyverse)
@@ -62,4 +67,64 @@ df_display
 
 ```{r, eval=FALSE}
 df_display |> gtsave(file.path(output_path, "specialized-mod-overlay.png"), expand = 10)
+```
+
+There are significant overlaps between ADA layers. The table below summaries how many activity units are within and outside of a specific agency. There is also a total count of activity units inside the combined ADA coverage area.
+
+```{r}
+ada_df <- read.xlsx(file.path(output_path, "ada-overlay.xlsx"))
+
+ada_levels <- c("King County Metro Access", 
+                "Not in King County Metro Access",
+            "Kitsap Transit ACCESS",
+            "Not in Kitsap Transit ACCESS",
+            "Pierce Transit SHUTTLE",
+            "Not in Pierce Transit SHUTTLE",
+            "Community Transit DART",
+            "Not in Community Transit DART",
+            "Everett Transit Paratransit",
+            "Not in Everett Transit Paratransit",
+            "Inside ADA Coverage",
+            "Outside ADA Coverage")
+
+ada_df2 <- ada_df |> 
+  mutate(label = factor(name, levels = ada_levels)) |> 
+  arrange(label)
+
+```
+
+```{r}
+ada_df_display <- ada_df2 |> 
+  gt(rowname_col = "name") |> 
+  cols_hide(label) |> 
+  tab_header(title = "ADA Coverage",
+             subtitle = "Activity Units in 2024") |> 
+  tab_spanner(
+    label = "2024",
+    columns = c("population_2024", "jobs_2024", "total_au_2024")
+  ) |> 
+  cols_label(
+    population_2024 = "Population",
+    jobs_2024 = "Jobs",
+    total_au_2024 = "Total Activity Units"
+  ) |> 
+  cols_align(
+    align = "center",
+    columns = c("population_2024", "jobs_2024", "total_au_2024")
+  ) |> 
+  fmt_number(
+    columns = c("population_2024", "jobs_2024", "total_au_2024"),
+    decimals = 0
+  ) |>
+  tab_row_group(
+    label = "Total",
+    rows = 11:12
+  )|>
+  tab_row_group(
+    label = "Agencies",
+    rows = 1:10
+  ) 
+  
+
+ada_df_display
 ```
